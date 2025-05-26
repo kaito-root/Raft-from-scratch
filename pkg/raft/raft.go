@@ -2,6 +2,8 @@ package raft
 
 import (
 	"math/rand"
+	"raft-from-scratch/internal/transport"
+	"raft-from-scratch/pkg/rpc"
 	"sync"
 	"time"
 )
@@ -13,11 +15,6 @@ const (
 	Candidate
 	Leader
 )
-
-type LogEntry struct {
-	Term    int    // Term when entry was received
-	Command string // Command to be executed
-}
 
 type ApplyMsg struct {
 	CommandValid bool        // True if the command is valid
@@ -33,7 +30,7 @@ type Raft struct {
 	state       State
 	currentTerm int
 	votedFor    *int
-	log         []LogEntry
+	log         []rpc.LogEntry
 
 	// Volatile state on all servers
 	commitIndex int // Index of highest log entry known to be committed
@@ -48,9 +45,10 @@ type Raft struct {
 
 	// timer
 	// electionTimeout is the duration after which a follower becomes a candidate
-	electionTimer *time.Timer
+	ElectionTimer *time.Timer
 	// heartbeatTimer is used to send periodic heartbeats to followers
 	heartbeatTimer *time.Ticker
+	Transport      transport.Transport
 }
 
 func (rf *Raft) make(id int, peers []int, applyCh chan ApplyMsg) *Raft {
@@ -60,13 +58,13 @@ func (rf *Raft) make(id int, peers []int, applyCh chan ApplyMsg) *Raft {
 		state:          Follower,
 		currentTerm:    0,
 		votedFor:       nil,
-		log:            []LogEntry{},
+		log:            []rpc.LogEntry{},
 		commitIndex:    0,
 		lastApplied:    0,
 		nextIndex:      make([]int, len(peers)),
 		matchIndex:     make([]int, len(peers)),
 		applyCh:        applyCh,
-		electionTimer:  time.NewTimer(randomElectionTimeout()),
+		ElectionTimer:  time.NewTimer(randomElectionTimeout()),
 		heartbeatTimer: time.NewTicker(100 * time.Millisecond), // Default heartbeat interval
 	}
 	go rf.applyLogs() // Start applying logs in a separate goroutine
@@ -109,16 +107,23 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.currentTerm, rf.state == Leader
 }
 
+// GetCurrentState returns the current state of the node
+func (rf *Raft) GetCurrentState() State {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.state
+}
+
 // GetID returns the server's ID
 func (rf *Raft) GetID() int {
 	return rf.id
 }
 
 // GetLog returns a copy of the server's log
-func (rf *Raft) GetLog() []LogEntry {
+func (rf *Raft) GetLog() []rpc.LogEntry {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log := make([]LogEntry, len(rf.log))
+	log := make([]rpc.LogEntry, len(rf.log))
 	copy(log, rf.log)
 	return log
 }
@@ -138,7 +143,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 
-	entry := LogEntry{
+	entry := rpc.LogEntry{
 		Term:    rf.currentTerm,
 		Command: cmdStr,
 	}
@@ -150,4 +155,29 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func Make(id int, peers []int, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
 	return rf.make(id, peers, applyCh)
+}
+
+// HandleRequestVote implements the RPCHandler interface
+func (rf *Raft) HandleRequestVote(args *rpc.RequestVoteArgs) (*rpc.RequestVoteReply, error) {
+	reply := rf.handleRequestVote(args)
+	return &reply, nil
+}
+
+// HandleAppendEntries implements the RPCHandler interface
+func (rf *Raft) HandleAppendEntries(args *rpc.AppendEntriesArgs) (*rpc.AppendEntriesReply, error) {
+	reply := rf.handleAppendEntries(args)
+	return &reply, nil
+}
+
+// ResetElectionTimer resets the election timer
+func (rf *Raft) ResetElectionTimer() {
+	if rf.ElectionTimer != nil {
+		rf.ElectionTimer.Stop()
+	}
+	rf.ElectionTimer = time.NewTimer(time.Duration(150+rand.Intn(150)) * time.Millisecond)
+}
+
+// StartElection starts a new election
+func (rf *Raft) StartElection() {
+	rf.startElection()
 }

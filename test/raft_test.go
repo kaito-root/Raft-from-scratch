@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kaito-root/raft-from-scratch/pkg/raft"
+	"raft-from-scratch/pkg/raft"
 )
 
 // Simulate a network of Raft nodes
